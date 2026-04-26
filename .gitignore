@@ -1,0 +1,15 @@
+# Secret Keys (NEVER PUSH THESE)
+credentials.json
+token.json
+config.py
+tasks.json
+
+# Python Environment
+.venv/
+__pycache__/
+*.pyc
+
+# Build Folders
+build/
+dist/
+*.spec
