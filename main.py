@@ -3,26 +3,19 @@ import os
 import datetime
 import json
 
-# --- 1. BULLETPROOF PATH LOGIC ---
+# --- APP PATH LOGIC ---
 if getattr(sys, 'frozen', False):
-    # Running as a packaged Mac App
-    # Look for files in the same folder as the App icon
     BASE_DIR = os.path.dirname(sys.executable)
-    # Look for internal code (the pages folder) in the temporary bundle
     BUNDLE_DIR = sys._MEIPASS 
 else:
-    # Running in Windsurf/Terminal
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     BUNDLE_DIR = BASE_DIR
 
-# Add the bundle directory to the system path so it can find the 'pages' folder
 sys.path.append(BUNDLE_DIR)
 
 def get_path(filename):
-    """Helper to find files like token.json and tasks.json in the App folder"""
     return os.path.join(BASE_DIR, filename)
 
-# --- 2. IMPORTS (After path logic) ---
 import customtkinter as ctk
 import config 
 from googleapiclient.discovery import build
@@ -30,34 +23,37 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# Import all pages
+# --- IMPORT ALL 6 PAGES ---
 from pages.overview import OverviewPage
 from pages.renewals import RenewalsPage
 from pages.calendar import CalendarPage
 from pages.ai_briefing import AIPage
 from pages.tasks import TasksPage
+from pages.churn_analyzer import ChurnAnalyzerPage
 
 class CSCommandOS(ctk.CTk):
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/calendar.readonly']
+    SCOPES =['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/drive.readonly']
 
     def __init__(self):
         super().__init__()
         
-        # UNIQUE TITLE to verify we are running the new version
-        self.title("CS COMMAND OS V1.1") 
+        self.title("CS COMMAND OS V2.0") 
         self.geometry("1300x850")
         self.configure(fg_color=config.COLORS["bg"])
         
         self.data = {
             "achieved": "₹0", "target": "₹0", "sub_achieved": "₹0", "topup_achieved": "₹0",
-            "events": [], "renewal_list": [], "selected_date": datetime.date.today(),
-            "tasks": []
+            "events": [], "renewal_list":[], "selected_date": datetime.date.today(),
+            "tasks":[]
         }
+        
+        # FIX FOR TKINTER ERROR: Define the current page upfront!
+        self.current_page = "OverviewPage" 
         
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Sidebar
+        # --- SIDEBAR ---
         self.sidebar = ctk.CTkFrame(self, width=220, fg_color=config.COLORS["sidebar"], corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(self.sidebar, text="CS COMMAND", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=40)
@@ -67,17 +63,21 @@ class CSCommandOS(ctk.CTk):
         self.create_nav_btn("💰 Renewals", "RenewalsPage")
         self.create_nav_btn("🗓️ Calendar", "CalendarPage")
         self.create_nav_btn("🚀 AI Briefing", "AIPage")
+        self.create_nav_btn("🚨 Churn Predictor", "ChurnAnalyzerPage") # NEW PAGE BUTTON
 
         ctk.CTkButton(self.sidebar, text="🔄 Sync System", fg_color="transparent", border_width=1, 
                       command=self.fetch_all_data).pack(side="bottom", pady=30, padx=20)
 
+        # --- CONTAINER ---
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
         self.container.grid_columnconfigure(0, weight=1)
         self.container.grid_rowconfigure(0, weight=1)
 
+        # --- REGISTER PAGES ---
         self.pages = {}
-        for PageClass in [OverviewPage, TasksPage, RenewalsPage, CalendarPage, AIPage]:
+        # ADDED CHURN ANALYZER HERE
+        for PageClass in[OverviewPage, TasksPage, RenewalsPage, CalendarPage, AIPage, ChurnAnalyzerPage]:
             page_name = PageClass.__name__
             frame = PageClass(parent=self.container, controller=self)
             self.pages[page_name] = frame
@@ -85,11 +85,10 @@ class CSCommandOS(ctk.CTk):
 
         self.load_tasks()
         self.fetch_all_data()
-        self.show_page("OverviewPage")
+        self.show_page(self.current_page)
 
     def get_service(self, name, version):
         creds = None
-        # CRITICAL: Use get_path to find these files!
         token_path = get_path('token.json')
         creds_path = get_path('credentials.json')
 
@@ -111,7 +110,7 @@ class CSCommandOS(ctk.CTk):
             try:
                 with open(task_path, 'r') as f:
                     self.data["tasks"] = json.load(f)
-            except: self.data["tasks"] = []
+            except: self.data["tasks"] =[]
 
     def save_tasks(self):
         with open(get_path('tasks.json'), 'w') as f:
@@ -124,7 +123,7 @@ class CSCommandOS(ctk.CTk):
             service = self.get_service('sheets', 'v4')
             rev_result = service.spreadsheets().values().get(
                 spreadsheetId=config.FINANCIAL_SHEET_ID, range=f"'{config.TAB_REVENUE}'!B3:C5").execute()
-            rows = rev_result.get('values', [])
+            rows = rev_result.get('values',[])
             if len(rows) >= 3:
                 self.data["sub_achieved"] = rows[0][0]
                 self.data["topup_achieved"] = rows[1][0]
@@ -133,14 +132,16 @@ class CSCommandOS(ctk.CTk):
 
             ren_result = service.spreadsheets().values().get(
                 spreadsheetId=config.FINANCIAL_SHEET_ID, range=f"'{config.TAB_RENEWAL}'!A2:J100").execute()
-            self.data["renewal_list"] = ren_result.get('values', [])
+            self.data["renewal_list"] = ren_result.get('values',[])
 
             cal_service = self.get_service('calendar', 'v3')
             time_min = datetime.datetime.combine(d, datetime.time.min).isoformat() + 'Z'
             time_max = datetime.datetime.combine(d, datetime.time.max).isoformat() + 'Z'
             self.data["events"] = cal_service.events().list(calendarId=config.OFFICE_CALENDAR_ID, 
                                                             timeMin=time_min, timeMax=time_max,
-                                                            singleEvents=True, orderBy='startTime').execute().get('items', [])
+                                                            singleEvents=True, orderBy='startTime').execute().get('items',[])
+            
+            # Safely show the current page
             self.show_page(self.current_page)
         except Exception as e: print(f"❌ Sync Error: {e}")
 
