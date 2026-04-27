@@ -32,7 +32,11 @@ from pages.tasks import TasksPage
 from pages.churn_analyzer import ChurnAnalyzerPage
 
 class CSCommandOS(ctk.CTk):
-    SCOPES =['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/drive.readonly']
+    SCOPES =[
+        'https://www.googleapis.com/auth/spreadsheets',       
+        'https://www.googleapis.com/auth/calendar.readonly', 
+        'https://www.googleapis.com/auth/drive.readonly'
+    ]
 
     def __init__(self):
         super().__init__()
@@ -47,7 +51,6 @@ class CSCommandOS(ctk.CTk):
             "tasks":[]
         }
         
-        # FIX FOR TKINTER ERROR: Define the current page upfront!
         self.current_page = "OverviewPage" 
         
         self.grid_columnconfigure(1, weight=1)
@@ -56,16 +59,20 @@ class CSCommandOS(ctk.CTk):
         # --- SIDEBAR ---
         self.sidebar = ctk.CTkFrame(self, width=220, fg_color=config.COLORS["sidebar"], corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        ctk.CTkLabel(self.sidebar, text="CS COMMAND", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=40)
+        ctk.CTkLabel(self.sidebar, text="CS TRACKER", font=ctk.CTkFont(family=config.FONT, size=20, weight="bold")).pack(pady=40)
         
+        # 🍎 NEW: Dictionary to store our buttons so we can change their colors
+        self.nav_buttons = {}
+
         self.create_nav_btn("📊 Overview", "OverviewPage")
         self.create_nav_btn("📋 Tasks", "TasksPage")
         self.create_nav_btn("💰 Renewals", "RenewalsPage")
         self.create_nav_btn("🗓️ Calendar", "CalendarPage")
         self.create_nav_btn("🚀 AI Briefing", "AIPage")
-        self.create_nav_btn("🚨 Churn Predictor", "ChurnAnalyzerPage") # NEW PAGE BUTTON
+        self.create_nav_btn("🚨 Churn Predictor", "ChurnAnalyzerPage")
 
-        ctk.CTkButton(self.sidebar, text="🔄 Sync System", fg_color="transparent", border_width=1, 
+        ctk.CTkButton(self.sidebar, text="🔄 Sync System", font=ctk.CTkFont(family=config.FONT, size=13), 
+                      fg_color="transparent", border_width=1, hover_color="#2C2C2E",
                       command=self.fetch_all_data).pack(side="bottom", pady=30, padx=20)
 
         # --- CONTAINER ---
@@ -76,7 +83,6 @@ class CSCommandOS(ctk.CTk):
 
         # --- REGISTER PAGES ---
         self.pages = {}
-        # ADDED CHURN ANALYZER HERE
         for PageClass in[OverviewPage, TasksPage, RenewalsPage, CalendarPage, AIPage, ChurnAnalyzerPage]:
             page_name = PageClass.__name__
             frame = PageClass(parent=self.container, controller=self)
@@ -145,13 +151,28 @@ class CSCommandOS(ctk.CTk):
             self.show_page(self.current_page)
         except Exception as e: print(f"❌ Sync Error: {e}")
 
+    # 🍎 NEW: Apple-styled Navigation Buttons
     def create_nav_btn(self, text, page_name):
-        btn = ctk.CTkButton(self.sidebar, text=text, height=45, fg_color="transparent", anchor="w",
-                            command=lambda: self.show_page(page_name))
-        btn.pack(fill="x", padx=15, pady=5)
+        btn = ctk.CTkButton(self.sidebar, text=text, height=40, corner_radius=8, 
+                            fg_color="transparent", text_color=config.COLORS["text_dim"], 
+                            hover_color="#2C2C2E", font=ctk.CTkFont(family=config.FONT, size=14, weight="bold"), 
+                            anchor="w", command=lambda: self.show_page(page_name))
+        btn.pack(fill="x", padx=15, pady=4)
+        
+        # Save it to the dictionary so we can highlight it later!
+        self.nav_buttons[page_name] = btn
 
+    # 🍎 NEW: Active State Highlighter
     def show_page(self, page_name):
         self.current_page = page_name
+        
+        # Loop through all buttons and highlight only the active one
+        for name, btn in self.nav_buttons.items():
+            if name == page_name:
+                btn.configure(fg_color=config.COLORS["card"], text_color="#FFFFFF")
+            else:
+                btn.configure(fg_color="transparent", text_color=config.COLORS["text_dim"])
+                
         frame = self.pages[page_name]
         frame.tkraise()
         frame.update_ui()

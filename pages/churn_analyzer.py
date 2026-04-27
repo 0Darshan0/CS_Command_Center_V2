@@ -1,116 +1,74 @@
 import customtkinter as ctk
 from google import generativeai as genai
 import config
-import webbrowser
-import urllib.parse
 import re
+import datetime
 
 class ChurnAnalyzerPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
         super().__init__(parent, fg_color="transparent")
         self.controller = controller
         genai.configure(api_key=config.GEMINI_API_KEY)
+        self.parsed_data = {} 
         
     def update_ui(self):
-        for widget in self.winfo_children(): widget.destroy()
+        for widget in self.winfo_children():
+            widget.destroy()
         
-        ctk.CTkLabel(self, text="AI Churn Predictor & MoM", font=ctk.CTkFont(size=28, weight="bold")).pack(anchor="w", pady=(0, 10))
+        # --- APPLE AESTHETIC HEADER ---
+        ctk.CTkLabel(self, text="AI Churn Predictor & CRM", font=ctk.CTkFont(family=config.FONT, size=32, weight="bold"), text_color="#FFFFFF").pack(anchor="w", pady=(0, 20))
 
-        # CLIENT HEALTH DASHBOARD
+        # --- HEALTH DASHBOARD (Apple Styled Cards) ---
         self.health_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.health_frame.pack(fill="x", pady=10)
-        self.health_badge = self.create_health_card(self.health_frame, "CLIENT HEALTH", "-", "#334155")
-        self.risk_badge = self.create_health_card(self.health_frame, "CHURN RISK", "-", "#334155")
-
-        # INPUT CARD
-        input_card = ctk.CTkFrame(self, fg_color=config.COLORS["card"], corner_radius=12)
-        input_card.pack(fill="x", pady=10)
+        self.health_frame.pack(fill="x", pady=(0, 15))
         
-        # Header with Auto-Fetch Button
-        input_header = ctk.CTkFrame(input_card, fg_color="transparent")
-        input_header.pack(fill="x", padx=20, pady=(15, 5))
-        ctk.CTkLabel(input_header, text="RAW TRANSCRIPT / NOTES", font=ctk.CTkFont(size=12, weight="bold"), text_color=config.COLORS["text_dim"]).pack(side="left")
-        ctk.CTkButton(input_header, text="📥 Fetch from Google Drive", height=28, font=ctk.CTkFont(size=11, weight="bold"), fg_color=config.COLORS["accent"], command=self.fetch_latest_transcript).pack(side="right")
-        
-        self.ai_input = ctk.CTkTextbox(input_card, height=120, fg_color="#0f172a", border_width=1, border_color="#334155")
-        self.ai_input.pack(fill="x", padx=20, pady=(0, 20))
-        self.ai_input.insert("0.0", "Paste your transcript here, or click 'Fetch from Google Drive' to pull your latest Google Meet transcript automatically.")
+        self.health_badge = self.create_health_card(self.health_frame, "CLIENT HEALTH", "-", "#2C2C2E")
+        self.risk_badge = self.create_health_card(self.health_frame, "CHURN RISK", "-", "#2C2C2E")
+        self.client_badge = self.create_health_card(self.health_frame, "DETECTED CLIENT", "Awaiting notes...", "#2C2C2E")
 
-        # BUTTON ROW
+        # --- INPUT SECTION (Flat macOS Style) ---
+        ctk.CTkLabel(self, text="MEETING TRANSCRIPT", font=ctk.CTkFont(family=config.FONT, size=12, weight="bold"), text_color=config.COLORS["text_dim"]).pack(anchor="w", pady=(0, 8))
+        
+        self.ai_input = ctk.CTkTextbox(self, height=120, fg_color=config.COLORS["card"], text_color="#FFFFFF", border_width=1, border_color=config.COLORS["border"], corner_radius=10, font=ctk.CTkFont(family=config.FONT, size=15), wrap="word")
+        self.ai_input.pack(fill="x", pady=(0, 20))
+        self.ai_input.insert("0.0", "Paste your entire meeting transcript here...")
+
+        # --- RESPONSIVE BUTTON ROW ---
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(fill="x", pady=10)
-        self.gen_btn = ctk.CTkButton(btn_row, text="Analyze Transcript 🚨", font=ctk.CTkFont(size=14, weight="bold"), height=45, fg_color=config.COLORS["urgent"], command=self.generate_report)
-        self.gen_btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.email_btn = ctk.CTkButton(btn_row, text="📧 Draft Follow-up", font=ctk.CTkFont(size=14, weight="bold"), height=45, fg_color=config.COLORS["success"], command=self.draft_email, state="disabled")
-        self.email_btn.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        btn_row.pack(fill="x", pady=(0, 20))
+        
+        # Primary Action Button (Red/Urgent)
+        self.gen_btn = ctk.CTkButton(btn_row, text="Analyze Transcript", font=ctk.CTkFont(family=config.FONT, size=14, weight="bold"), height=36, corner_radius=8, fg_color=config.COLORS["urgent"], hover_color="#D13429", command=self.generate_report)
+        self.gen_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        
+        # Secondary Action Button (Muted Dark Gray until active)
+        self.save_btn = ctk.CTkButton(btn_row, text="Save to CRM", font=ctk.CTkFont(family=config.FONT, size=14, weight="bold"), height=36, corner_radius=8, fg_color="#2C2C2E", hover_color="#3A3A3C", text_color="#FFFFFF", command=self.save_to_crm, state="disabled")
+        self.save_btn.pack(side="left", fill="x", expand=True, padx=(8, 0))
 
-        # OUTPUT CARD
-        output_card = ctk.CTkFrame(self, fg_color=config.COLORS["card"], corner_radius=12)
-        output_card.pack(fill="both", expand=True)
-        self.ai_output = ctk.CTkTextbox(output_card, font=("Segoe UI", 13), fg_color="#0f172a")
-        self.ai_output.pack(fill="both", expand=True, padx=20, pady=20)
+        # --- OUTPUT SECTION ---
+        ctk.CTkLabel(self, text="ANALYSIS & MoM", font=ctk.CTkFont(family=config.FONT, size=12, weight="bold"), text_color=config.COLORS["text_dim"]).pack(anchor="w", pady=(0, 8))
+        
+        self.ai_output = ctk.CTkTextbox(self, fg_color=config.COLORS["card"], text_color="#E5E5EA", border_width=1, border_color=config.COLORS["border"], corner_radius=10, font=ctk.CTkFont(family=config.FONT, size=15), wrap="word")
+        self.ai_output.pack(fill="both", expand=True, pady=(0, 10))
 
     def create_health_card(self, parent, title, val, color):
-        card = ctk.CTkFrame(parent, fg_color=config.COLORS["card"], height=80, corner_radius=10)
-        card.pack(side="left", expand=True, fill="both", padx=5)
-        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=config.COLORS["text_dim"]).pack(pady=(10,0))
-        badge = ctk.CTkFrame(card, fg_color=color, corner_radius=8)
-        badge.pack(pady=5)
-        lbl = ctk.CTkLabel(badge, text=val, font=ctk.CTkFont(size=16, weight="bold"), padx=15, pady=2)
+        card = ctk.CTkFrame(parent, fg_color=config.COLORS["card"], height=70, corner_radius=10, border_width=1, border_color=config.COLORS["border"])
+        card.pack(side="left", expand=True, fill="both", padx=(0, 10))
+        
+        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(family=config.FONT, size=11, weight="bold"), text_color=config.COLORS["text_dim"]).pack(pady=(12,0))
+        
+        badge = ctk.CTkFrame(card, fg_color=color, corner_radius=6)
+        badge.pack(pady=(5, 12))
+        lbl = ctk.CTkLabel(badge, text=val, font=ctk.CTkFont(family=config.FONT, size=14, weight="bold"), text_color="#FFFFFF", padx=12, pady=2)
         lbl.pack()
         return lbl
 
-    def fetch_latest_transcript(self):
-        """Automatically searches Google Drive for the newest Google Meet Transcript"""
-        self.ai_input.delete("0.0", "end")
-        self.ai_input.insert("0.0", "⏳ Searching Google Drive for the latest transcript...")
-        self.update()
-
-        try:
-            drive_service = self.controller.get_service('drive', 'v3')
-            
-            # Search for Google Docs that contain the word "Transcript" in the title
-            results = drive_service.files().list(
-                q="name contains 'Transcript' and mimeType='application/vnd.google-apps.document'",
-                orderBy="createdTime desc",
-                pageSize=1,
-                fields="files(id, name)"
-            ).execute()
-            
-            items = results.get('files',[])
-            
-            if not items:
-                self.ai_input.delete("0.0", "end")
-                self.ai_input.insert("0.0", "❌ No transcripts found in your Google Drive.")
-                return
-                
-            latest_file = items[0]
-            
-            self.ai_input.delete("0.0", "end")
-            self.ai_input.insert("0.0", f"⏳ Downloading '{latest_file['name']}'...")
-            self.update()
-            
-            # Download the text from the Google Doc
-            content = drive_service.files().export_media(
-                fileId=latest_file['id'], 
-                mimeType='text/plain'
-            ).execute()
-            
-            transcript_text = content.decode('utf-8')
-            
-            self.ai_input.delete("0.0", "end")
-            self.ai_input.insert("0.0", transcript_text)
-            
-        except Exception as e:
-            self.ai_input.delete("0.0", "end")
-            self.ai_input.insert("0.0", f"❌ Error fetching from Drive: {e}\n(Did you delete token.json and re-authorize?)")
-
     def generate_report(self):
         notes = self.ai_input.get("0.0", "end").strip()
-        if not notes or "Paste your entire" in notes or "Searching" in notes: return
+        if not notes or "Paste your" in notes: return
         
         self.ai_output.delete("0.0", "end")
-        self.ai_output.insert("0.0", "⏳ Gemini is reading the transcript and analyzing sentiment...")
+        self.ai_output.insert("0.0", "⏳ Gemini is analyzing the transcript and formatting the MoM...")
         self.update()
 
         try:
@@ -119,35 +77,66 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
             model = genai.GenerativeModel(best_model)
             
             prompt = f"""
-            You are a Senior Client Success Analyst. Read the following meeting transcript/notes.
-            First, analyze the client's sentiment and give a Health Score (1-10) and Churn Risk (LOW, MEDIUM, HIGH).
-            Then, provide structured Minutes of Meeting.
+            You are a Senior Client Success Analyst. Read the following meeting transcript.
+            
+            CRITICAL SPELLING INSTRUCTIONS:
+            Meeting transcripts often have phonetic spelling errors. You MUST correct them automatically.
+            - E.g., "go quick", "goquick", "goclick" MUST be corrected to "Gokwik".
+            - E.g., "cherry o", "cheerio" MUST be corrected to "Cheerio".
+            - Fix any other obvious brand names based on context.
+
+            INSTRUCTIONS:
+            1. Guess the Client/Company Name.
+            2. Analyze sentiment for Health Score (1-10) and Churn Risk (LOW, MEDIUM, HIGH).
+            3. Provide a highly structured, professional Minutes of Meeting (MoM).
             
             You MUST use this EXACT format:
             
             ---METRICS---
-            [HEALTH:8][RISK:LOW]
+            [CLIENT:Company Name][HEALTH:8][RISK:LOW]
             
             ---MOM---
-            (Executive summary of the meeting)
+            **1. Executive Summary:**
+            (2-3 sentences summarizing the overall outcome of the meeting)
+
+            **2. Key Discussion Points:**
+            • (Bullet point covering major topics)
+            • (Bullet point covering major topics)
+            
+            **3. Product / Support Feedback:**
+            • (Note any bugs, feature requests, or dashboard complaints)
             
             ---NEXT_STEPS---
-            (Bulleted action items with owners)
+            • [ ] (Owner Name) - (Specific Action item)
+            • [ ] (Owner Name) - (Specific Action item)
             
             ---CHURN_ANALYSIS---
-            (1 paragraph explaining why you gave this health score and risk level)
+            (1 short paragraph explaining the health score and risk level based on the client's tone)
             
-            TRANSCRIPT/NOTES: {notes}
+            TRANSCRIPT: {notes}
             """
             response = model.generate_content(prompt)
             full_text = response.text
             
+            client_match = re.search(r'\[CLIENT:(.*?)\]', full_text)
             health_match = re.search(r'\[HEALTH:(\d+)\]', full_text)
             risk_match = re.search(r'\[RISK:([A-Z]+)\]', full_text)
             
-            if health_match and risk_match:
+            if health_match and risk_match and client_match:
+                client_name = client_match.group(1).strip()
                 health_score = int(health_match.group(1))
                 risk_level = risk_match.group(1)
+                
+                mom = full_text.split("---MOM---")[1].split("---NEXT_STEPS---")[0].strip() if "---MOM---" in full_text else "N/A"
+                steps = full_text.split("---NEXT_STEPS---")[1].split("---CHURN_ANALYSIS---")[0].strip() if "---NEXT_STEPS---" in full_text else "N/A"
+                
+                self.parsed_data = {
+                    "client": client_name,
+                    "health": health_score,
+                    "risk": risk_level,
+                    "mom": mom,
+                    "next_steps": steps
+                }
                 
                 h_color = config.COLORS["success"] if health_score >= 8 else config.COLORS["warning"] if health_score >= 5 else config.COLORS["urgent"]
                 self.health_badge.configure(text=f"{health_score} / 10")
@@ -157,30 +146,66 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
                 self.risk_badge.configure(text=risk_level)
                 self.risk_badge.master.configure(fg_color=r_color)
                 
+                self.client_badge.configure(text=client_name)
+                self.client_badge.master.configure(fg_color=config.COLORS["accent"])
+                
                 display_text = full_text.split("---MOM---")[1].strip() if "---MOM---" in full_text else full_text
-                display_text = "---MINUTES OF MEETING---\n" + display_text
+                display_text = "--- MINUTES OF MEETING ---\n\n" + display_text
             else:
                 display_text = full_text
 
             self.ai_output.delete("0.0", "end")
             self.ai_output.insert("0.0", display_text)
-            self.email_btn.configure(state="normal")
+            
+            # Make the Save button "Pop" so the user knows it's ready
+            self.save_btn.configure(state="normal", fg_color=config.COLORS["accent"], hover_color="#0070DF")
             
         except Exception as e:
             self.ai_output.delete("0.0", "end")
             self.ai_output.insert("0.0", f"❌ AI Error: {str(e)}")
 
-    def draft_email(self):
-        full_text = self.ai_output.get("0.0", "end")
-        email_body = full_text
-        if "---NEXT_STEPS---" in full_text:
-            parts = full_text.split("---CHURN_ANALYSIS---")[0] 
-            email_body = parts.replace("---MINUTES OF MEETING---", "Meeting Summary:").replace("---NEXT_STEPS---", "\nNext Steps:").replace("**", "").strip()
-
-        subject = urllib.parse.quote("Notes & Next Steps from our meeting")
-        body_text = f"Hi Team,\n\nThank you for the productive call today. Please find the summary below:\n\n{email_body}\n\nBest regards,\nDarshan Sheregar"
-        body = urllib.parse.quote(body_text)
+    def save_to_crm(self):
+        self.ai_output.insert("end", "\n\n⏳ Connecting to Google Sheets CRM...")
+        self.update()
         
-        office_email = config.OFFICE_CALENDAR_ID
-        gmail_url = f"https://mail.google.com/mail/u/{office_email}/?view=cm&fs=1&su={subject}&body={body}"
-        webbrowser.open(gmail_url)
+        try:
+            service = self.controller.get_service('sheets', 'v4')
+            sheet_id = config.CRM_SHEET_ID
+            client_name = self.parsed_data.get("client", "Unknown Client")
+            tab_name = re.sub(r'[\[\]*?:/\\]', '', client_name)[:30]
+
+            sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+            sheets = sheet_metadata.get('sheets', '')
+            sheet_exists = any(s.get("properties", {}).get("title") == tab_name for s in sheets)
+
+            if not sheet_exists:
+                requests =[{"addSheet": {"properties": {"title": tab_name}}}]
+                service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": requests}).execute()
+                headers = [["Date", "Health Score", "Churn Risk", "Minutes of Meeting", "Next Steps"]]
+                service.spreadsheets().values().update(
+                    spreadsheetId=sheet_id, range=f"'{tab_name}'!A1:E1",
+                    valueInputOption="USER_ENTERED", body={"values": headers}
+                ).execute()
+
+            today_str = datetime.datetime.now().strftime("%b %d, %Y")
+            row_data = [[
+                today_str,
+                f"{self.parsed_data.get('health', '')}/10",
+                self.parsed_data.get("risk", ""),
+                self.parsed_data.get("mom", ""),
+                self.parsed_data.get("next_steps", "")
+            ]]
+            
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range=f"'{tab_name}'!A2:E2",
+                valueInputOption="USER_ENTERED", insertDataOption="INSERT_ROWS",
+                body={"values": row_data}
+            ).execute()
+            
+            self.ai_output.insert("end", f"\n✅ Successfully saved to CRM Tab: '{tab_name}'!")
+            
+            # Switch button back to muted gray state after saving
+            self.save_btn.configure(state="disabled", text="Saved Successfully", fg_color="#2C2C2E", hover_color="#2C2C2E")
+            
+        except Exception as e:
+            self.ai_output.insert("end", f"\n❌ CRM Save Error: {str(e)}")

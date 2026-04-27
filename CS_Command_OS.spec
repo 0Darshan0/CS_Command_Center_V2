@@ -21,7 +21,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='main',
+    name='CS_Command_OS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -40,11 +40,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='main',
+    name='CS_Command_OS',
 )
 app = BUNDLE(
     coll,
-    name='main.app',
+    name='CS_Command_OS.app',
     icon=None,
     bundle_identifier=None,
 )
