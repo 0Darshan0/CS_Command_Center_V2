@@ -1,14 +1,16 @@
 import customtkinter as ctk
-from google import generativeai as genai
+import requests
+import threading
+import json
 import config
 import re
 import datetime
 
 class ChurnAnalyzerPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
+        # fg_color="transparent" ensures it seamlessly blends with the main.py sidebar & background
         super().__init__(parent, fg_color="transparent")
         self.controller = controller
-        genai.configure(api_key=config.GEMINI_API_KEY)
         self.parsed_data = {} 
         
     def update_ui(self):
@@ -63,61 +65,79 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
         lbl.pack()
         return lbl
 
+    # ==========================================
+    # GROQ AI INTEGRATION (Threaded)
+    # ==========================================
     def generate_report(self):
         notes = self.ai_input.get("0.0", "end").strip()
         if not notes or "Paste your" in notes: return
         
         self.ai_output.delete("0.0", "end")
-        self.ai_output.insert("0.0", "⏳ Gemini is analyzing the transcript and formatting the MoM...")
-        self.update()
+        self.ai_output.insert("0.0", "⏳ Groq Llama 3.3 70B is analyzing the transcript...")
+        self.gen_btn.configure(state="disabled")
+        
+        # Start background thread to prevent UI freezing
+        threading.Thread(target=self._groq_worker, args=(notes,), daemon=True).start()
 
+    def _groq_worker(self, notes):
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config.GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        system_prompt = """
+        You are a Senior Client Success Analyst. Read the following meeting transcript.
+        
+        CRITICAL SPELLING INSTRUCTIONS:
+        Meeting transcripts often have phonetic spelling errors. You MUST correct them automatically.
+        - E.g., "go quick", "goquick", "goclick" MUST be corrected to "Gokwik".
+        - E.g., "cherry o", "cheerio" MUST be corrected to "Cheerio".
+        - Fix any other obvious brand names based on context.
+
+        INSTRUCTIONS:
+        1. Guess the Client/Company Name.
+        2. Analyze sentiment for Health Score (1-10) and Churn Risk (LOW, MEDIUM, HIGH).
+        3. Provide a highly structured, professional Minutes of Meeting (MoM).
+        
+        You MUST use this EXACT format:
+        
+        ---METRICS---
+        [CLIENT:Company Name][HEALTH:8][RISK:LOW]
+        
+        ---MOM---
+        **1. Executive Summary:**
+        (2-3 sentences summarizing the overall outcome of the meeting)
+
+        **2. Key Discussion Points:**
+        • (Bullet point covering major topics)
+        
+        **3. Product / Support Feedback:**
+        • (Note any bugs, feature requests, or dashboard complaints)
+        
+        ---NEXT_STEPS---
+        • [ ] (Owner Name) - (Specific Action item)
+        
+        ---CHURN_ANALYSIS---
+        (1 short paragraph explaining the health score and risk level based on the client's tone)
+        """
+        
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"TRANSCRIPT:\n{notes}"}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1500
+        }
+        
         try:
-            available_models =[m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            best_model = next((m for m in available_models if "1.5-flash" in m), available_models[0])
-            model = genai.GenerativeModel(best_model)
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            response.raise_for_status()
+            full_text = response.json()["choices"][0]["message"]["content"]
             
-            prompt = f"""
-            You are a Senior Client Success Analyst. Read the following meeting transcript.
-            
-            CRITICAL SPELLING INSTRUCTIONS:
-            Meeting transcripts often have phonetic spelling errors. You MUST correct them automatically.
-            - E.g., "go quick", "goquick", "goclick" MUST be corrected to "Gokwik".
-            - E.g., "cherry o", "cheerio" MUST be corrected to "Cheerio".
-            - Fix any other obvious brand names based on context.
-
-            INSTRUCTIONS:
-            1. Guess the Client/Company Name.
-            2. Analyze sentiment for Health Score (1-10) and Churn Risk (LOW, MEDIUM, HIGH).
-            3. Provide a highly structured, professional Minutes of Meeting (MoM).
-            
-            You MUST use this EXACT format:
-            
-            ---METRICS---
-            [CLIENT:Company Name][HEALTH:8][RISK:LOW]
-            
-            ---MOM---
-            **1. Executive Summary:**
-            (2-3 sentences summarizing the overall outcome of the meeting)
-
-            **2. Key Discussion Points:**
-            • (Bullet point covering major topics)
-            • (Bullet point covering major topics)
-            
-            **3. Product / Support Feedback:**
-            • (Note any bugs, feature requests, or dashboard complaints)
-            
-            ---NEXT_STEPS---
-            • [ ] (Owner Name) - (Specific Action item)
-            • [ ] (Owner Name) - (Specific Action item)
-            
-            ---CHURN_ANALYSIS---
-            (1 short paragraph explaining the health score and risk level based on the client's tone)
-            
-            TRANSCRIPT: {notes}
-            """
-            response = model.generate_content(prompt)
-            full_text = response.text
-            
+            # Parse the text safely
             client_match = re.search(r'\[CLIENT:(.*?)\]', full_text)
             health_match = re.search(r'\[HEALTH:(\d+)\]', full_text)
             risk_match = re.search(r'\[RISK:([A-Z]+)\]', full_text)
@@ -130,7 +150,7 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
                 mom = full_text.split("---MOM---")[1].split("---NEXT_STEPS---")[0].strip() if "---MOM---" in full_text else "N/A"
                 steps = full_text.split("---NEXT_STEPS---")[1].split("---CHURN_ANALYSIS---")[0].strip() if "---NEXT_STEPS---" in full_text else "N/A"
                 
-                self.parsed_data = {
+                parsed_data = {
                     "client": client_name,
                     "health": health_score,
                     "risk": risk_level,
@@ -138,36 +158,56 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
                     "next_steps": steps
                 }
                 
-                h_color = config.COLORS["success"] if health_score >= 8 else config.COLORS["warning"] if health_score >= 5 else config.COLORS["urgent"]
-                self.health_badge.configure(text=f"{health_score} / 10")
-                self.health_badge.master.configure(fg_color=h_color)
-                
-                r_color = config.COLORS["success"] if risk_level == "LOW" else config.COLORS["warning"] if risk_level == "MEDIUM" else config.COLORS["urgent"]
-                self.risk_badge.configure(text=risk_level)
-                self.risk_badge.master.configure(fg_color=r_color)
-                
-                self.client_badge.configure(text=client_name)
-                self.client_badge.master.configure(fg_color=config.COLORS["accent"])
-                
                 display_text = full_text.split("---MOM---")[1].strip() if "---MOM---" in full_text else full_text
                 display_text = "--- MINUTES OF MEETING ---\n\n" + display_text
+                
+                # Send back to main UI thread
+                self.after(0, self._update_ui_success, parsed_data, health_score, risk_level, client_name, display_text)
             else:
-                display_text = full_text
-
-            self.ai_output.delete("0.0", "end")
-            self.ai_output.insert("0.0", display_text)
-            
-            # Make the Save button "Pop" so the user knows it's ready
-            self.save_btn.configure(state="normal", fg_color=config.COLORS["accent"], hover_color="#0070DF")
-            
+                self.after(0, self._update_ui_error, f"Could not parse metrics. Raw output:\n{full_text}")
+                
         except Exception as e:
-            self.ai_output.delete("0.0", "end")
-            self.ai_output.insert("0.0", f"❌ AI Error: {str(e)}")
+            self.after(0, self._update_ui_error, f"❌ Groq API Error: {str(e)}")
 
+    def _update_ui_success(self, parsed_data, health_score, risk_level, client_name, display_text):
+        """Runs on the main thread to update UI components safely"""
+        self.parsed_data = parsed_data
+        
+        h_color = config.COLORS["success"] if health_score >= 8 else config.COLORS["warning"] if health_score >= 5 else config.COLORS["urgent"]
+        self.health_badge.configure(text=f"{health_score} / 10")
+        self.health_badge.master.configure(fg_color=h_color)
+        
+        r_color = config.COLORS["success"] if risk_level == "LOW" else config.COLORS["warning"] if risk_level == "MEDIUM" else config.COLORS["urgent"]
+        self.risk_badge.configure(text=risk_level)
+        self.risk_badge.master.configure(fg_color=r_color)
+        
+        self.client_badge.configure(text=client_name)
+        self.client_badge.master.configure(fg_color=config.COLORS["accent"])
+        
+        self.ai_output.delete("0.0", "end")
+        self.ai_output.insert("0.0", display_text)
+        
+        self.gen_btn.configure(state="normal")
+        self.save_btn.configure(state="normal", text="Save to CRM", fg_color=config.COLORS["accent"], hover_color="#0070DF")
+
+    def _update_ui_error(self, error_msg):
+        """Runs on main thread to show errors"""
+        self.ai_output.delete("0.0", "end")
+        self.ai_output.insert("0.0", error_msg)
+        self.gen_btn.configure(state="normal")
+
+    # ==========================================
+    # GOOGLE SHEETS CRM SAVING (Threaded)
+    # ==========================================
     def save_to_crm(self):
-        self.ai_output.insert("end", "\n\n⏳ Connecting to Google Sheets CRM...")
+        self.ai_output.insert("end", "\n\n⏳ Connecting to Google Sheets CRM (Background thread)...")
+        self.save_btn.configure(state="disabled", text="Saving...")
         self.update()
         
+        # Start background thread so UI doesn't freeze during network call
+        threading.Thread(target=self._crm_worker, daemon=True).start()
+
+    def _crm_worker(self):
         try:
             service = self.controller.get_service('sheets', 'v4')
             sheet_id = config.CRM_SHEET_ID
@@ -179,7 +219,7 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
             sheet_exists = any(s.get("properties", {}).get("title") == tab_name for s in sheets)
 
             if not sheet_exists:
-                requests =[{"addSheet": {"properties": {"title": tab_name}}}]
+                requests = [{"addSheet": {"properties": {"title": tab_name}}}]
                 service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": requests}).execute()
                 headers = [["Date", "Health Score", "Churn Risk", "Minutes of Meeting", "Next Steps"]]
                 service.spreadsheets().values().update(
@@ -202,10 +242,15 @@ class ChurnAnalyzerPage(ctk.CTkFrame):
                 body={"values": row_data}
             ).execute()
             
-            self.ai_output.insert("end", f"\n✅ Successfully saved to CRM Tab: '{tab_name}'!")
-            
-            # Switch button back to muted gray state after saving
-            self.save_btn.configure(state="disabled", text="Saved Successfully", fg_color="#2C2C2E", hover_color="#2C2C2E")
+            self.after(0, self._crm_success, tab_name)
             
         except Exception as e:
-            self.ai_output.insert("end", f"\n❌ CRM Save Error: {str(e)}")
+            self.after(0, self._crm_error, str(e))
+
+    def _crm_success(self, tab_name):
+        self.ai_output.insert("end", f"\n✅ Successfully saved to CRM Tab: '{tab_name}'!")
+        self.save_btn.configure(state="disabled", text="Saved Successfully", fg_color="#2C2C2E", hover_color="#2C2C2E")
+
+    def _crm_error(self, error_msg):
+        self.ai_output.insert("end", f"\n❌ CRM Save Error: {error_msg}")
+        self.save_btn.configure(state="normal", text="Retry Save", fg_color=config.COLORS["urgent"], hover_color="#D13429")

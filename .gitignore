@@ -6,3 +6,4 @@ config.py
 build/
 dist/
 __pycache__/
+cs-command-hub/
